@@ -29,7 +29,11 @@
 #include "imagedata.h"
 #include "epdpaint.h"
 
+#include <Scheduler.h>
+// Include pico/multicore.h to run core1 function
+// NB: no delay(), neither Serial.print etc.... can be called on core1. Only sleep_ms or pico sleep_... funcs
 
+#include "pico/multicore.h"
 extern "C" {
   #include <hardware/sync.h>
   #include <hardware/flash.h>
@@ -41,31 +45,39 @@ extern "C" {
 #define COLORED     0
 #define UNCOLORED   1
 
+#define DIR_FWD             ( 0 )
+#define DIR_BWD             ( 1 )
 
-#define BTN_1     (9)
-#define BTN_2     (10)
-#define BTN_3     (11)
-#define BTN_4     (12)
-#define BTN_5     (13)
-#define BTN_6     (14)
-#define BTN_7     (15)
+
+// PINS
+#define PUL                 ( 1 )
+#define DIR1                ( 0 )
+#define BTN_1               ( 9 )
+#define BTN_2               ( 10 )
+#define BTN_3               ( 11 )
+#define BTN_4               ( 12 )
+#define BTN_5               ( 13 )
+#define BTN_6               ( 14 )
+#define BTN_7               ( 15 )
 
 #define DEFAULT_SPEED       ( 1 )
 #define DEFAULT_TURNS       ( 56 )
 
 #define MAGICK      ( 0xDEEDEE ) 
 
+#define ONE_RPM_STEPS       ( 1600 )
 
 struct data
 {
   unsigned int      turns_count:10;
   unsigned int      speed:2;
+  unsigned int      direction:1;
   unsigned int      magick:4;
-  unsigned int      horisontal_turns:8;
+  unsigned int      horisontal_turns:7;
   unsigned int      vertical_turns:8;
 } __attribute__((packed));
-struct data     __data;
 
+struct data     __data;
 
 
 
@@ -74,7 +86,7 @@ int             *p;
 int             addr;
 unsigned int    page; // prevent comparison of unsigned and signed int
 int             first_empty_page = -1;
-bool            load_defaults = 0;
+
 
 unsigned char   image[1500];
 Paint           paint(image, 400, 28);    //width should be the multiple of 8 
@@ -82,57 +94,130 @@ Epd             epd;
 
 int buttonState = 0;
 
+int loop_motor_enable = 0;
+int __stop = 0;
 
-
-void menu_screen(int number)
+void loop_motor() 
 {
+  while ( 1 )
+  {
+    digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite( DIR1, 1 );// __data.direction );
+    if ( loop_motor_enable )
+    {
+      for ( int i = 0; i < ( ONE_RPM_STEPS * __data.turns_count ); i ++ )
+      {
+        digitalWrite( PUL, HIGH );
+        delayMicroseconds( 100 );
+        digitalWrite( PUL, LOW );
+        delayMicroseconds( 100 );
+        if ( __stop )
+          break;
+      }
+      loop_motor_enable = 0;      
+
+    }
+    delayMicroseconds(10000);
+    digitalWrite(LED_BUILTIN, LOW);
+  } 
+
+}
+
+
+
+void load_defaults()
+{
+  __data.turns_count = 56;
+  __data.speed = 2;
+  __data.direction = DIR_FWD;
+  __data.magick = MAGICK;
+  __data.horisontal_turns = 0;
+  __data.vertical_turns = 0;
+}
+
+
+void start_stop_screen(char *text)
+{
+  char    line_string[350];
+
+  epd.ClearFrame();
+  paint.Clear(UNCOLORED);
+  memset( line_string, 0, sizeof( line_string ) );
+  sprintf( line_string, "         %s", text );
+  paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
+  epd.SetPartialWindowBlack(paint.GetImage(), 0, 122, paint.GetWidth(), paint.GetHeight());
+
+  epd.DisplayFrame();
+
+}
+
+void menu_screen( int number )
+{
+  char    line_string[350];
+
   epd.ClearFrame();
 
-  paint.Clear(UNCOLORED);
-  char    line_one_string[350];
-
-  memset(line_one_string, 0, sizeof(line_one_string));
-  sprintf(line_one_string, "Coil Turns      %d", number);
-  paint.DrawStringAt(2, 2, line_one_string, &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 2,  paint.GetWidth(), paint.GetHeight());
+  paint.Clear( UNCOLORED );
+  memset( line_string, 0, sizeof( line_string ) );
+  sprintf( line_string, "Coil Turns   %d", __data.turns_count );
+  paint.DrawStringAt( 2, 2, line_string, &Font24, COLORED );
+  epd.SetPartialWindowBlack( paint.GetImage(), 0, 2,  paint.GetWidth(), paint.GetHeight() );
 
 
   paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "Hello world", &Font24, COLORED);
+  memset( line_string, 0, sizeof( line_string ) );
+  sprintf( line_string, "Speed       %d", __data.speed );
+  paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
   epd.SetPartialWindowBlack(paint.GetImage(), 0, 32, paint.GetWidth(), paint.GetHeight());
   
   paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "1 Hello world", &Font24, COLORED);
+  memset( line_string, 0, sizeof( line_string ) );
+  sprintf( line_string, "Direction   %d", __data.direction );
+  paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
   epd.SetPartialWindowBlack(paint.GetImage(), 0, 62, paint.GetWidth(), paint.GetHeight());
 
 
-  paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "2 Hello world", &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 92, paint.GetWidth(), paint.GetHeight());
+  // paint.Clear(UNCOLORED);
+  // memset( line_string, 0, sizeof( line_string ) );
+  // sprintf( line_string, "Speed       %d", __data.speed );
+  // paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
+  // epd.SetPartialWindowBlack(paint.GetImage(), 0, 92, paint.GetWidth(), paint.GetHeight());
 
-  paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "3 Hello world", &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 122, paint.GetWidth(), paint.GetHeight());
+  // paint.Clear(UNCOLORED);
+  // memset( line_string, 0, sizeof( line_string ) );
+  // sprintf( line_string, "Speed       %d", __data.speed );
+  // paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
+  // epd.SetPartialWindowBlack(paint.GetImage(), 0, 122, paint.GetWidth(), paint.GetHeight());
 
-  paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "4 Hello world", &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 152, paint.GetWidth(), paint.GetHeight());
+  // paint.Clear(UNCOLORED);
+  // memset( line_string, 0, sizeof( line_string ) );
+  // sprintf( line_string, "Speed       %d", __data.speed );
+  // paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
+  // epd.SetPartialWindowBlack(paint.GetImage(), 0, 152, paint.GetWidth(), paint.GetHeight());
 
-  paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "5 Hello world", &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 182, paint.GetWidth(), paint.GetHeight());
+  // paint.Clear(UNCOLORED);
+  // memset( line_string, 0, sizeof( line_string ) );
+  // sprintf( line_string, "Speed       %d", __data.speed );
+  // paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
+  // epd.SetPartialWindowBlack(paint.GetImage(), 0, 182, paint.GetWidth(), paint.GetHeight());
 
-  paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "6 Hello world", &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 212, paint.GetWidth(), paint.GetHeight());
+  // paint.Clear(UNCOLORED);
+  // memset( line_string, 0, sizeof( line_string ) );
+  // sprintf( line_string, "Speed       %d", __data.speed );
+  // paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
+  // epd.SetPartialWindowBlack(paint.GetImage(), 0, 212, paint.GetWidth(), paint.GetHeight());
 
-  paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "7 Hello world", &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 242, paint.GetWidth(), paint.GetHeight());
+  // paint.Clear(UNCOLORED);
+  // memset( line_string, 0, sizeof( line_string ) );
+  // sprintf( line_string, "Speed       %d", __data.speed );
+  // paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
+  // epd.SetPartialWindowBlack(paint.GetImage(), 0, 242, paint.GetWidth(), paint.GetHeight());
 
-  paint.Clear(UNCOLORED);
-  paint.DrawStringAt(2, 2, "8 Hello world", &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 272, paint.GetWidth(), paint.GetHeight());
+  // paint.Clear(UNCOLORED);
+  // memset( line_string, 0, sizeof( line_string ) );
+  // sprintf( line_string, "Speed       %d", __data.speed );
+  // paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
+  // epd.SetPartialWindowBlack(paint.GetImage(), 0, 272, paint.GetWidth(), paint.GetHeight());
 
   epd.DisplayFrame();
 
@@ -156,13 +241,18 @@ void setup()
   pinMode(BTN_6, INPUT_PULLUP);
   pinMode(BTN_7, INPUT_PULLUP);
 
+
+
+  pinMode ( PUL, OUTPUT );
+  pinMode ( DIR1, OUTPUT );
+
   // put your setup code here, to run once:
   Serial.begin(115200);
 
   addr = XIP_BASE + FLASH_TARGET_OFFSET;
   memcpy( (void * )&__data, ( void * )addr, sizeof( __data ) );
   if( 0xDEEDEE != __data.magick )
-    load_defaults = 1;
+    load_defaults();
 
   if (epd.Init() != 0) 
   {
@@ -171,24 +261,35 @@ void setup()
   }
 
   menu_screen( sizeof( 0xDEEDEE ) );
+  multicore_launch_core1(loop_motor);
 
 }
 
 void loop() 
 {
-
+//loop_motor_enable = 1;
   if ( LOW == digitalRead( BTN_1 ) )
   {
-    digitalWrite(LED_BUILTIN, HIGH);
-    menu_screen(1);
+    //digitalWrite(LED_BUILTIN, HIGH);
+    //start_stop_screen( "START" );
+    loop_motor_enable = 1;
+    __stop = 0;
   }
  
   if ( LOW == digitalRead( BTN_2 ) )
   {
-    digitalWrite(LED_BUILTIN, HIGH);
-    menu_screen(2);
+ //   digitalWrite(LED_BUILTIN, HIGH);
+      //menu_screen(2);
   }
 
+
+  if ( LOW == digitalRead( BTN_7 ) )
+  {
+    //digitalWrite(LED_BUILTIN, LOW);
+    //start_stop_screen( "STOP" );
+    __stop = 1;
+    loop_motor_enable = 0;
+  }
   delayMicroseconds(1000);
 
   // delayMicroseconds(500000);
