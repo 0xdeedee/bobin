@@ -40,10 +40,10 @@ extern "C" {
 };
 
 
-#define FLASH_TARGET_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define FLASH_TARGET_OFFSET ( PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE )
 
-#define COLORED     0
-#define UNCOLORED   1
+#define COLORED             ( 0 )
+#define UNCOLORED           ( 1 )
 
 #define DIR_FWD             ( 0 )
 #define DIR_BWD             ( 1 )
@@ -63,7 +63,7 @@ extern "C" {
 #define DEFAULT_SPEED       ( 1 )
 #define DEFAULT_TURNS       ( 56 )
 
-#define MAGICK      ( 0xDEEDEE ) 
+#define MAGICK              ( 0xDEEDEE ) 
 
 #define ONE_RPM_STEPS       ( 1600 )
 
@@ -86,7 +86,8 @@ int             *p;
 int             addr;
 unsigned int    page; // prevent comparison of unsigned and signed int
 int             first_empty_page = -1;
-
+unsigned int    position = 0;
+unsigned int    menu_entered = 0;
 
 unsigned char   image[1500];
 Paint           paint(image, 400, 28);    //width should be the multiple of 8 
@@ -101,10 +102,11 @@ void loop_motor()
 {
   while ( 1 )
   {
-    digitalWrite(LED_BUILTIN, HIGH);
+    
     digitalWrite( DIR1, 1 );// __data.direction );
     if ( loop_motor_enable )
     {
+      digitalWrite(LED_BUILTIN, HIGH);
       for ( int i = 0; i < ( ONE_RPM_STEPS * __data.turns_count ); i ++ )
       {
         digitalWrite( PUL, HIGH );
@@ -115,10 +117,11 @@ void loop_motor()
           break;
       }
       loop_motor_enable = 0;      
+      digitalWrite(LED_BUILTIN, LOW);
 
     }
     delayMicroseconds(10000);
-    digitalWrite(LED_BUILTIN, LOW);
+    
   } 
 
 }
@@ -161,21 +164,40 @@ void menu_screen( int number )
   memset( line_string, 0, sizeof( line_string ) );
   sprintf( line_string, "Coil Turns   %d", __data.turns_count );
   paint.DrawStringAt( 2, 2, line_string, &Font24, COLORED );
-  epd.SetPartialWindowBlack( paint.GetImage(), 0, 2,  paint.GetWidth(), paint.GetHeight() );
-
+  if ( position != 1 )
+  {
+    epd.SetPartialWindowBlack( paint.GetImage(), 0, 2,  paint.GetWidth(), paint.GetHeight() );
+  }
+  else
+  {
+    epd.SetPartialWindowRed( paint.GetImage(), 0, 2,  paint.GetWidth(), paint.GetHeight() );
+  }
 
   paint.Clear(UNCOLORED);
   memset( line_string, 0, sizeof( line_string ) );
   sprintf( line_string, "Speed       %d", __data.speed );
   paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 32, paint.GetWidth(), paint.GetHeight());
-  
+  if ( position != 2 )
+  {
+    epd.SetPartialWindowBlack(paint.GetImage(), 0, 32, paint.GetWidth(), paint.GetHeight());
+  }
+  else
+  {
+    epd.SetPartialWindowRed(paint.GetImage(), 0, 32, paint.GetWidth(), paint.GetHeight());
+  }
+
   paint.Clear(UNCOLORED);
   memset( line_string, 0, sizeof( line_string ) );
   sprintf( line_string, "Direction   %d", __data.direction );
   paint.DrawStringAt(2, 2, line_string, &Font24, COLORED);
-  epd.SetPartialWindowBlack(paint.GetImage(), 0, 62, paint.GetWidth(), paint.GetHeight());
-
+  if ( position != 3 )
+  {
+   epd.SetPartialWindowBlack(paint.GetImage(), 0, 62, paint.GetWidth(), paint.GetHeight());
+  }
+  else
+  {
+   epd.SetPartialWindowRed(paint.GetImage(), 0, 62, paint.GetWidth(), paint.GetHeight());
+  }
 
   // paint.Clear(UNCOLORED);
   // memset( line_string, 0, sizeof( line_string ) );
@@ -233,13 +255,13 @@ void menu_screen( int number )
 void setup() 
 {
 
-  pinMode(BTN_1, INPUT_PULLUP);
-  pinMode(BTN_2, INPUT_PULLUP);
-  pinMode(BTN_3, INPUT_PULLUP);
-  pinMode(BTN_4, INPUT_PULLUP);
-  pinMode(BTN_5, INPUT_PULLUP);
-  pinMode(BTN_6, INPUT_PULLUP);
-  pinMode(BTN_7, INPUT_PULLUP);
+  pinMode(BTN_1, INPUT_PULLUP);   // START
+  pinMode(BTN_2, INPUT_PULLUP);   // DOWN
+  pinMode(BTN_3, INPUT_PULLUP);   // LEFT
+  pinMode(BTN_4, INPUT_PULLUP);   // MIDDLE
+  pinMode(BTN_5, INPUT_PULLUP);   // RIGHT
+  pinMode(BTN_6, INPUT_PULLUP);   // UP
+  pinMode(BTN_7, INPUT_PULLUP);   // STOP
 
 
 
@@ -261,13 +283,21 @@ void setup()
   }
 
   menu_screen( sizeof( 0xDEEDEE ) );
-  multicore_launch_core1(loop_motor);
+  multicore_launch_core1( loop_motor );
 
 }
-
+static int count = 0;
 void loop() 
 {
-//loop_motor_enable = 1;
+  
+  if ( count == 0 )
+  {
+     digitalWrite(LED_BUILTIN, HIGH);
+  //   delayMicroseconds(50000);
+  //   digitalWrite(LED_BUILTIN, LOW);
+  }
+
+  count ++;
   if ( LOW == digitalRead( BTN_1 ) )
   {
     //digitalWrite(LED_BUILTIN, HIGH);
@@ -276,10 +306,44 @@ void loop()
     __stop = 0;
   }
  
-  if ( LOW == digitalRead( BTN_2 ) )
+  if ( LOW == digitalRead( BTN_2 ) )    //down
   {
- //   digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(LED_BUILTIN, HIGH);
+    position --;
+    if ( position <= 1 )
+      position = 3;
+
+      menu_screen(0);
+  }
+
+  if ( LOW == digitalRead( BTN_3 ) )
+  {
+    digitalWrite(LED_BUILTIN, HIGH);
       //menu_screen(2);
+  }
+
+  if ( LOW == digitalRead( BTN_4 ) )
+  {
+    digitalWrite(LED_BUILTIN, HIGH);
+      //menu_screen(2);
+  }
+
+
+  if ( LOW == digitalRead( BTN_5 ) )
+  {
+    digitalWrite(LED_BUILTIN, HIGH);
+      //menu_screen(2);
+  }
+
+  if ( LOW == digitalRead( BTN_6 ) )
+  {
+    position ++;
+    if ( position >= 3 )
+      position = 1;
+
+ 
+    digitalWrite(LED_BUILTIN, HIGH);
+//    menu_screen(0);
   }
 
 
@@ -290,12 +354,15 @@ void loop()
     __stop = 1;
     loop_motor_enable = 0;
   }
-  delayMicroseconds(1000);
+  //delayMicroseconds(1000);
 
-  // delayMicroseconds(500000);
-  // digitalWrite(LED_BUILTIN, HIGH);
-    
-  // delayMicroseconds(500000);
-  // digitalWrite(LED_BUILTIN, LOW);
+//   position = 2;
+//   menu_screen(0);
+// delay(10);
+
+//   position = 3;
+//   menu_screen(0);
+// delay(10);
+
 
 }
